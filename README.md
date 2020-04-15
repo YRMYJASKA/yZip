@@ -13,3 +13,15 @@ $ yzip --help
 
 in order to know how to use yZip. Only file-to-file (de)compression is allowed with the 
 '-f'(input) and '-o' (output) arguments.
+
+## Example usage
+
+Compressing a file
+```
+$ yzip -f original -o compressed
+```
+
+Decompressing a file
+```
+$ yzip -d -f compressed -o original
+```
