@@ -1,0 +1,193 @@
+#!/bin/python
+""" yzip: A compression algorithm with Huffmann encoding"""
+
+import collections
+import sys
+
+
+class Node:
+    def __init__(self, val, weight):
+        self.val = val
+        self.weight = weight
+        self.branches = []
+
+
+def codeword_traversal(tree, path="", codewords={}):
+    """Traverse the binary tree and assign a codeword for each leaf"""
+    if len(tree.branches) == 0:
+        codewords[tree.val] = path
+        return codewords
+
+    for i in [0, 1]:
+        codewords = codeword_traversal(tree.branches[i],
+                                       path + str(i), codewords)
+    return codewords
+
+
+def encode(in_str):
+    """ Huffman encodes a string with near-optimal codewords.
+        Returns:
+            - encoded: a string of 1s and 0s corresponding to the tree
+            - codewords: a dictionary of codewords and their letters
+    """
+    tree = dict(collections.Counter(in_str))
+    tree = [Node(k, v) for k, v in tree.items()]
+    tree.sort(key=lambda x: x.weight)
+
+    # Start construction of the tree
+    while len(tree) > 1:
+        a = tree.pop(0)
+        b = tree.pop(0)
+        new = Node(a.val+b.val, a.weight + b.weight)
+        new.branches = [a, b]
+        if len(tree) == 0:
+            tree = new
+            break
+        for i in range(0, len(tree)):
+            if tree[i].weight >= new.weight:
+                tree.insert(i, new)
+                break
+            elif i == len(tree) - 1:
+                tree.append(new)
+                break
+    # Iterate the codewords
+    codewords = codeword_traversal(tree)
+
+    # Assign each character a codeword
+    encoded = ""
+    for c in in_str:
+        encoded += codewords[c]
+
+    return encoded, codewords
+
+
+def decode(encoded, codewords):
+    buff = ""
+    decoded = ""
+    for c in encoded:
+        buff += c
+        if buff in codewords.values():
+            decoded += list(codewords.keys())[list(codewords.values())
+                                              .index(buff)]
+            buff = ""
+    return decoded
+
+
+def write_to_file(encoded, codewords, filename):
+    """Write a Huffman encoded string into file form, thus compressing it
+        File Structure:
+        (Bytes)       | Content
+        ---------------------------------------------------------------------------------------
+        1 - 2         | length of Huffman encoding information
+        3 - x         | Encoding information (Dictionary entries in the
+                      | format of :<key>:<value>:)
+        x - (EOF - 1) | Data encoded with the codewords described in the header
+        EOF           | Length of padding in the last byte
+
+    """
+    with open(filename, "wb") as ofile:
+        # Write the codewords as a header
+        header = b""
+        for k, v in codewords.items():
+            header += (bytes(f":{k}:{v}", "utf-8"))
+        # Prepend the length of the header in bytes
+        ofile.write((len(header) - 1).to_bytes(2, 'big'))
+        # Write the encoding header, remove the first ':'
+        ofile.write(header[1:])
+        #  Write the encoded string in chunks of 8-bits
+        padding = 0
+        for i in range(0, len(encoded), 8):
+            chunk = encoded[i:i+8]
+            if len(chunk) < 8:
+                padding = 8 - len(chunk)
+            ofile.write(bytes(int(chunk[::-1], 2).to_bytes(1, 'little')))
+            #
+        ofile.write(bytes(padding.to_bytes(1, 'little')))
+        ofile.close()
+    return
+
+
+def read_from_file(filename):
+    with open(filename, "rb") as ifile:
+        # Header Length
+        hl = int.from_bytes(ifile.read(2), 'big')
+
+        header = str(ifile.read(hl), 'utf-8').split(":")
+        codewords = {}
+        for i in range(0, len(header), 2):
+            codewords[header[i]] = header[i+1]
+
+        # Decode the 'body' of the compressed file
+        body = ifile.read()
+        padding = body[-1:]
+        padding = int.from_bytes(padding, "little")
+        body = body[:-1]
+        encoded = ""
+        for i in range(0, len(body)):
+            encoded += format(body[i], '008b')[::-1]
+        message = decode(encoded[:-padding], codewords)
+        ifile.close()
+    return message
+
+
+def help_banner():
+    print("""Usage: yzip [OPTION]... [-f | -o]
+Encode or decode a file,, according to the yzip specifications
+
+
+Options:
+    -d              decode data instead of encoding
+                    (requires a filepath)
+    -h, --help      display this help message and exit
+    -v, --verion    display the version number
+
+Arguments:
+    -f              input file path (REQUIRED)
+    -o              output file path (REQUIRED)""")
+
+
+if __name__ == "__main__":
+    # Process arguments
+    if '-h' in sys.argv or '--help' in sys.argv:
+        # Display help
+        help_banner()
+    elif '-v' in sys.argv or '--version' in sys.argv:
+        # Display the version and exit
+        print("yzip version: 1.0.0")
+    else:
+        infile = ""
+        outfile = ""
+        decoding = False
+        i = 1
+        while i < len(sys.argv):
+            if sys.argv[i] == '-o':
+                outfile = sys.argv[i+1]
+                i += 2
+            elif sys.argv[i] == '-f':
+                infile = sys.argv[i+1]
+                i += 2
+            elif sys.argv[i] == '-d':
+                decoding = True
+                i += 1
+            else:
+                print(f"No argument called '{sys.argv[i]}'")
+                exit(3)
+
+        # Error checks
+        if infile == "":
+            print("Input file is required! Exiting...")
+            exit(99)
+        if outfile == "":
+            print("Output file is required! Exiting...")
+            exit(99)
+
+        if decoding:
+            contents = read_from_file(infile)
+            with open(outfile, "w") as _file:
+                _file.write(contents)
+        else:
+            contents = ""
+            with open(infile, "r") as _file:
+                contents = _file.read()
+            encoded, codewords = encode(contents)
+            write_to_file(encoded, codewords, outfile)
